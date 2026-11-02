@@ -159,7 +159,7 @@ def plot_bars(results):
     colours = plt.cm.tab10(np.arange(len(names)))
     for ax, vals, title, ylabel in zip(
         axes, [times, params, display],
-        ["training time (s)", "trainable parameters", "metric (higher = better)"],
+        ["training time (s)", "trainable parameters (log)", "metric (higher = better)"],
         ["seconds", "params", "score"]):
         ax.bar(names, vals, color=colours)
         ax.set_title(title)
@@ -168,6 +168,14 @@ def plot_bars(results):
         for tick in ax.get_xticklabels():
             tick.set_horizontalalignment("right")
         ax.grid(axis="y", alpha=0.3)
+    # Parameter counts span 31 → 615 000, so a linear axis hides the small
+    # ones entirely. Log scale makes every practice visible.
+    axes[1].set_yscale("log")
+    axes[1].set_ylim(10, 1e6)
+    for ax, vals in zip(axes, [times, params, display]):
+        for i, v in enumerate(vals):
+            fmt = (f"{v:.0f}" if v >= 100 else f"{v:.2f}")
+            ax.text(i, v, fmt, ha="center", va="bottom", fontsize=8)
     fig.suptitle("Comparison of the five practices", fontsize=14)
     fig.tight_layout()
     fig.savefig(PNG_BARS, dpi=120)
