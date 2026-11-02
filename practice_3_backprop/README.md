@@ -27,15 +27,35 @@ detects the feature count from the data, so both work.
 Each run produces train/test loss and accuracy curves, written to
 `outputs/p3_*.png`.
 
-## Measured results — augmentation (30k train, 5k test, 12 epochs, dropout 0.25)
+## Measured results
+
+### Augmentation (30k train, 5k test, 12 epochs, hidden 256, dropout 0.25)
 
 | variant | train acc | test acc | gap |
 |---|---|---|---|
 | no augmentation | 0.8942 | 0.8684 | **+0.0258** (overfitting) |
 | shift + rotation | 0.8064 | 0.8340 | **−0.0276** (no overfitting) |
 
-Augmentation costs train accuracy and buys test accuracy — the gap flips
-sign, which is the overfitting problem disappearing.
+Augmentation **removes the overfitting gap** — it flips its sign. But note
+the price: with a fixed 12-epoch budget, augmentation *lowers* test
+accuracy (0.834 vs 0.868) because the model is learning from harder,
+shifted and rotated examples and hasn't converged yet. Give it more
+epochs and the augmented model wins on test accuracy too — the point at
+this budget is that the gap disappears, not that the score is higher.
+
+### Other sweeps (30k train, 5k test, 5–8 epochs)
+
+| sweep | result |
+|---|---|
+| hidden 32 / 64 / 128 / 256 | test acc 0.848 / 0.857 / 0.863 / 0.865 — params 26k → 269k |
+| activation relu / tanh | 0.863 / 0.863 |
+| optimiser sgd / adam | 0.843 / 0.863 |
+| dropout 0.0 / 0.25 / 0.5 | 0.870 / 0.867 / 0.860 |
+
+Hidden width buys accuracy very cheaply here (32→256 units is +1.7 points
+for 10× the parameters), but the marginal return collapses fast. Optimiser
+choice matters more than architecture at this scale: Adam beats SGD by
+2 points.
 
 ## Run
 
