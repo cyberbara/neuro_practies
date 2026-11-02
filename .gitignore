@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# Outputs (generated artefacts)
+outputs/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Torch / torchvision caches
+.cache/
+
+# Logs
+*.log

@@ -1,0 +1,22 @@
+# neural-network-practices
+# Five classical neural network training practices with a head-to-head comparison.
+
+[project]
+name = "neuro-practics"
+version = "0.1.0"
+description = "Hebb / Delta / Backprop / RBF / SOM — implementations and benchmark"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "matplotlib>=3.9",
+    "pandas>=2.2",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.3"]
+all = ["neuro-practics[torch]"]
+
+[tool.uv]
+package = false
