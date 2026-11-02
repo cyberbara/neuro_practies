@@ -48,29 +48,37 @@ def row(name, params, neurons, t, metric, metric_label, notes):
 
 
 def run_practice_1():
-    """Hebb: store 5 patterns, measure noisy-pattern recovery rate."""
-    from practice_1_hebb.demo import to_patterns
-    _, patterns = to_patterns()
+    """Hebb: real letter images, measure recovery under noise."""
+    from practice_1_hebb.renderer import make_dataset
+    _, patterns = make_dataset(letters="ABCDEFGHIJ", size=28)
     n_in = patterns.shape[1]
-    net = HebbianNetwork(n_in, rule="oja", eta=0.05)
+    net = HebbianNetwork(n_in, rule="oja", eta=1e-4)
     t0 = time.perf_counter()
-    net.train(patterns, epochs=10)
+    net.train(patterns, epochs=5)
     t = time.perf_counter() - t0
-    acc = net.noisy_recovery(patterns, noise=0.2, n_trials=500)
-    return row("1_hebb_oja", net.W.size, n_in, t, acc,
-               "recovery_rate", "6 letter patterns, 25 neurons, 20% noise")
+    acc = net.noisy_recovery(patterns, noise=0.2, n_trials=300)
+    return row("1_hebb_letters", net.W.size, n_in, t, acc,
+               "recovery_rate",
+               "40 PIL letter renders (10 letters x 4 fonts, 28x28), 20% noise")
 
 
 def run_practice_2():
-    """Delta: AND toy problem."""
-    from practice_2_delta.perceptron import toy
-    X, y = toy("AND")
-    net = Perceptron(n_input=2, activation="sigmoid", eta=0.5, seed=0)
+    """Delta: breast-cancer Wisconsin — real binary classification."""
+    from sklearn.datasets import load_breast_cancer
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
+    d = load_breast_cancer()
+    X = StandardScaler().fit_transform(d.data)
+    y = d.target.astype(np.float64)
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25,
+                                           random_state=0, stratify=y)
+    net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid", eta=0.1, seed=0)
     t0 = time.perf_counter()
-    res = net.fit(X, y.astype(float), epochs=200)
+    res = net.fit(Xtr, ytr, Xte, yte, epochs=300)
     t = time.perf_counter() - t0
-    return row("2_delta_and", net.W.size + 1, 1, t, res.accuracy_history[-1],
-               "accuracy", "AND toy, sigmoid, 200 epochs")
+    return row("2_delta_breast", net.W.size + 1, 1, t, res.test_acc_history[-1],
+               "test_accuracy",
+               "breast-cancer Wisconsin, 30 features, 25% test split, 300 epochs")
 
 
 def run_practice_3():
@@ -92,29 +100,47 @@ def run_practice_3():
 
 
 def run_practice_4():
-    """RBF: two-moons classification, 30 centres."""
-    X, y = two_moons()
-    net = RBFNet(RBFConfig(n_centres=30, output_solver="lstsq"))
+    """RBF: handwritten-digit classification, one-vs-rest RBF nets."""
+    from sklearn.datasets import load_digits
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
+    d = load_digits()
+    X = StandardScaler().fit_transform(d.data)
+    y = d.target.astype(np.int64)
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3,
+                                           random_state=0, stratify=y)
+    n_centres = 60
     t0 = time.perf_counter()
-    net.fit(X, y)
+    nets = []
+    for c in range(10):
+        net = RBFNet(RBFConfig(n_centres=n_centres, output_solver="lstsq"))
+        net.fit(Xtr, (ytr == c).astype(np.float64))
+        nets.append(net)
     t = time.perf_counter() - t0
-    acc = float(((net.predict(X) >= 0.5) == y).mean())
-    return row("4_rbf_moons", net.W.size + (1 if np.isscalar(net.b) else net.b.size),
-               30, t, acc, "accuracy", "two-moons, K-means centres, closed-form output")
+    P = np.column_stack([n.predict(Xte) for n in nets])
+    acc = float((P.argmax(1) == yte).mean())
+    params = sum(n.W.size + (1 if np.isscalar(n.b) else n.b.size) for n in nets)
+    return row("4_rbf_digits", params, n_centres * 10, t, acc,
+               "test_accuracy",
+               "sklearn digits (8x8, 10 classes), 60 centres/class, one-vs-rest")
 
 
 def run_practice_5():
-    """SOM: 8x8 map on Iris."""
-    X, y, _ = iris()
-    cfg = SOMConfig(n_rows=8, n_cols=8, n_epochs=50)
+    """SOM: 16x16 map on handwritten digits."""
+    from sklearn.datasets import load_digits
+    from sklearn.preprocessing import StandardScaler
+    d = load_digits()
+    X = StandardScaler().fit_transform(d.data)
+    cfg = SOMConfig(n_rows=16, n_cols=16, n_epochs=60)
     som = SOM(cfg)
     t0 = time.perf_counter()
     som.fit(X)
     t = time.perf_counter() - t0
     d2 = np.min(np.linalg.norm(som.W[None, :, :] - X[:, None, :], axis=2), axis=1)
     qe = float(d2.mean())
-    return row("5_som_iris", som.W.size, som.W.shape[0], t, qe,
-               "quantisation_error", "Iris 150x4, 8x8 map, 50 epochs (lower=better)")
+    return row("5_som_digits", som.W.size, som.W.shape[0], t, qe,
+               "quantisation_error",
+               "sklearn digits (8x8), 16x16 map, 60 epochs (lower=better)")
 
 
 # ----------------------------------------------------------------- plotting

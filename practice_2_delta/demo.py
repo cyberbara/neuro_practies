@@ -1,7 +1,10 @@
-"""Demo for practice 2: delta-rule perceptron on AND / OR / NAND / XOR / Iris.
+"""Demo for practice 2: delta-rule perceptron.
 
-Shows the classic result that a single-layer perceptron cannot learn XOR,
-plots the MSE-per-epoch curves, and visualises the decision boundary.
+Three experiments:
+  1. AND / OR / NAND / XOR — classical lesson. XOR doesn't converge.
+  2. Breast-cancer Wisconsin — real binary classification (30 features).
+     Train/test split, η sweep, convergence on a real linear-ish problem.
+  3. Effect of weight initialisation on the toy AND task.
 """
 from __future__ import annotations
 
@@ -10,6 +13,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 from practice_2_delta.perceptron import Perceptron, toy
 
@@ -35,13 +41,19 @@ def run_toy(name, eta=0.5, epochs=200):
     return X, y, model, res, dt
 
 
-def main():
-    # --- AND / OR / NAND / XOR -----------------------------------------------
+def breast_cancer_data(seed=0):
+    d = load_breast_cancer()
+    X = StandardScaler().fit_transform(d.data)
+    y = d.target.astype(np.float64)
+    return train_test_split(X, y, test_size=0.25, random_state=seed, stratify=y)
+
+
+def toy_panel():
+    """AND / OR / NAND / XOR in one figure."""
     problems = ["AND", "OR", "NAND", "XOR"]
     fig, axes = plt.subplots(2, 4, figsize=(14, 6))
     for col, name in enumerate(problems):
-        X, y, model, res, dt = run_toy(name)
-        # MSE / accuracy curve
+        X, y, model, res, _ = run_toy(name)
         ax = axes[0, col]
         ax.plot(res.mse_history, label="MSE")
         ax.plot(res.accuracy_history, label="accuracy")
@@ -49,7 +61,6 @@ def main():
         ax.set_xlabel("epoch")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
-        # Decision region
         ax = axes[1, col]
         xx, yy, Z = decision_grid(model, X)
         ax.contourf(xx, yy, Z, alpha=0.3, cmap="RdBu")
@@ -59,44 +70,75 @@ def main():
                        edgecolors="k")
         ax.set_title(f"{name} boundary (η={model.eta})")
         ax.set_xlabel("x1"); ax.set_ylabel("x2")
+    fig.suptitle("Toy problems — the XOR barrier", fontsize=14)
     fig.tight_layout()
     fig.savefig(OUT / "p2_toy.png", dpi=120)
     plt.close(fig)
 
-    # --- Iris (subset, two classes) ------------------------------------------
-    from sklearn.datasets import load_iris
-    iris = load_iris()
-    # Use only classes 0 and 1, two features for a 2-D plot
-    X = iris.data[iris.target < 2, :2]
-    y = iris.target[iris.target < 2]
 
-    # Normalise features — makes the demo converge in a few hundred epochs.
-    X = (X - X.mean(0)) / X.std(0)
+def breast_cancer_panel():
+    """Real binary classification: breast_cancer, 30 features."""
+    Xtr, Xte, ytr, yte = breast_cancer_data()
+    etas = [0.01, 0.05, 0.1, 0.5]
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    for ax, eta in zip(axes, [0.05, 0.5]):
-        model = Perceptron(n_input=2, activation="sigmoid", eta=eta, seed=42)
-        res = model.fit(X, y.astype(float), epochs=300)
-        ax.plot(res.mse_history, label="MSE")
-        ax.plot(res.accuracy_history, label="accuracy")
-        ax.set_title(f"Iris, η={eta}, final acc={res.accuracy_history[-1]:.3f}")
-        ax.set_xlabel("epoch")
-        ax.legend()
-        ax.grid(alpha=0.3)
+    # Left: train/test accuracy curves for each eta
+    for eta in etas:
+        net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid",
+                          eta=eta, seed=0)
+        res = net.fit(Xtr, ytr, Xte, yte, epochs=300)
+        axes[0].plot(res.train_acc_history, label=f"η={eta} train")
+        axes[0].plot(res.test_acc_history,  label=f"η={eta} test", linestyle="--")
+    axes[0].set_xlabel("epoch")
+    axes[0].set_ylabel("accuracy")
+    axes[0].set_title("Breast-cancer Wisconsin — convergence vs η")
+    axes[0].legend(fontsize=8, ncol=2)
+    axes[0].grid(alpha=0.3)
+
+    # Right: final accuracy bar chart
+    final_train, final_test = [], []
+    for eta in etas:
+        net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid",
+                          eta=eta, seed=0)
+        res = net.fit(Xtr, ytr, Xte, yte, epochs=300)
+        final_train.append(res.train_acc_history[-1])
+        final_test.append(res.test_acc_history[-1])
+    x = np.arange(len(etas))
+    w = 0.4
+    axes[1].bar(x - w/2, final_train, w, label="train", color="C0")
+    axes[1].bar(x + w/2, final_test,  w, label="test",  color="C3")
+    axes[1].set_xticks(x); axes[1].set_xticklabels([f"η={e}" for e in etas])
+    axes[1].set_ylabel("accuracy"); axes[1].set_ylim(0.85, 1.0)
+    axes[1].set_title("Final train/test accuracy")
+    axes[1].legend(); axes[1].grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT / "p2_iris.png", dpi=120)
+    fig.savefig(OUT / "p2_breast.png", dpi=120)
     plt.close(fig)
 
-    # --- Effect of weight initialisation -----------------------------------
+
+def init_sweep():
+    """Variability of AND-convergence across 20 seeds."""
     final_accs = []
-    seeds = list(range(20))
-    for seed in seeds:
+    for seed in range(20):
         m = Perceptron(n_input=2, activation="sigmoid", eta=0.1, seed=seed)
         r = m.fit(*toy("AND"), epochs=100)
         final_accs.append(r.accuracy_history[-1])
-    print("AND accuracy over 20 random seeds:", np.mean(final_accs),
-          "±", np.std(final_accs))
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    ax.bar(range(20), final_accs)
+    ax.set_xlabel("seed"); ax.set_ylabel("final accuracy")
+    ax.set_title("AND — final accuracy across 20 random initialisations")
+    ax.set_ylim(0, 1.05)
+    ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(OUT / "p2_init_sweep.png", dpi=120)
+    plt.close(fig)
+    print(f"AND accuracy: {np.mean(final_accs):.3f} ± {np.std(final_accs):.3f}")
 
+
+def main():
+    toy_panel()
+    breast_cancer_panel()
+    init_sweep()
     print("figures written to:", OUT)
 
 

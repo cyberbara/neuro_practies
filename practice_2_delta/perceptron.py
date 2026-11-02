@@ -33,6 +33,8 @@ class TrainResult:
     bias: float
     mse_history: list[float]
     accuracy_history: list[float]
+    train_acc_history: list[float]
+    test_acc_history: list[float]
     epochs_run: int
 
 
@@ -87,17 +89,28 @@ class Perceptron:
             b += eta * grad
 
     # --------------------------------------------------------------- training
-    def fit(self, X, y, epochs: int = 200, log_every: int = 1):
+    def fit(self, X, y, X_test=None, y_test=None, epochs: int = 200,
+            log_every: int = 1):
         mse_hist = []
         acc_hist = []
+        train_acc_hist = []
+        test_acc_hist = []
         for ep in range(1, epochs + 1):
             self._step(X, y)
             if ep % log_every == 0 or ep == epochs:
                 preds = self.predict_raw(X)
                 mse = float(((preds - y) ** 2).mean())
                 mse_hist.append(mse)
-                acc_hist.append(float((self.predict_class(X) == y).mean()))
-        return TrainResult(self.W.copy(), self.b, mse_hist, acc_hist, epochs)
+                acc = float((self.predict_class(X) == y).mean())
+                acc_hist.append(acc)
+                train_acc_hist.append(acc)
+                if X_test is not None and y_test is not None:
+                    test_acc_hist.append(
+                        float((self.predict_class(X_test) == y_test).mean()))
+                else:
+                    test_acc_hist.append(acc)
+        return TrainResult(self.W.copy(), self.b, mse_hist, acc_hist,
+                           train_acc_hist, test_acc_hist, epochs)
 
 
 # ---------------------------------------------------------------- datasets
