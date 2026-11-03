@@ -11,6 +11,10 @@ Two training paths are supported for the output weights:
 
 Centres are picked by K-means; per-centre widths σ_i are set to the median
 distance to the nearest neighbour (a common heuristic).
+
+The output layer supports several classes at once: pass `y` as an (n, c)
+matrix of targets and the network learns c linear read-outs sharing the same
+hidden layer.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ class RBFConfig:
     output_solver: str = "lstsq"   # "lstsq" | "gradient"
     output_lr: float = 0.05
     output_epochs: int = 200
+    kmeans_n_init: int = 3
 
 
 def _gaussian(x, centres, widths):
@@ -36,8 +41,8 @@ def _gaussian(x, centres, widths):
     return np.exp(-sq / (2.0 * widths[None, :] ** 2))
 
 
-def _fit_centres(X, n_centres, random_state=0):
-    km = KMeans(n_clusters=n_centres, n_init=10, random_state=random_state)
+def _fit_centres(X, n_centres, random_state=0, n_init=3):
+    km = KMeans(n_clusters=n_centres, n_init=n_init, random_state=random_state)
     km.fit(X)
     centres = km.cluster_centers_
     # Per-centre width = median distance to the k nearest neighbour points.
@@ -58,7 +63,8 @@ class RBFNet:
     def fit(self, X, y):
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
-        self.centres, self.widths = _fit_centres(X, self.cfg.n_centres)
+        self.centres, self.widths = _fit_centres(
+            X, self.cfg.n_centres, n_init=self.cfg.kmeans_n_init)
         Phi = _gaussian(X, self.centres, self.widths)
         if self.cfg.output_solver == "lstsq":
             # y can be (n,) or (n, c_out); use lstsq on the augmented matrix.
@@ -67,13 +73,14 @@ class RBFNet:
             sol, *_ = np.linalg.lstsq(A, y if y.ndim > 1 else y[:, None], rcond=None)
             self.W, self.b = sol[:-1], sol[-1]
         else:
-            self.W = np.zeros(self.centres.shape[0])
-            self.b = 0.0
+            self.W = np.zeros((self.centres.shape[0],) if y.ndim == 1
+                              else (self.centres.shape[0], y.shape[1]))
+            self.b = 0.0 if y.ndim == 1 else np.zeros(y.shape[1])
             for _ in range(self.cfg.output_epochs):
                 pred = Phi @ self.W + self.b
                 grad = Phi.T @ (pred - y) / X.shape[0]
                 self.W -= self.cfg.output_lr * grad
-                self.b -= self.cfg.output_lr * (pred - y).mean()
+                self.b -= self.cfg.output_lr * (pred - y).mean(axis=0)
         return self
 
     def predict(self, X):

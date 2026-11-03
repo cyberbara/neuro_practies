@@ -2,8 +2,9 @@
 
 Four experiments:
   1. Approximate a 1-D sine wave; sweep the number of centres.
-  2. Handwritten-digit classification (sklearn digits, 8x8, 10 classes) —
-     the real task. Sweep the number of centres.
+  2. Letters dataset (28×28, 26 classes) — the real task. One RBF network
+     with 26 linear read-outs sharing a single hidden layer of Gaussian
+     centres. Sweep the number of centres.
   3. Closed-form (least squares) vs gradient-descent output layer —
      the headline "RBF trains fast" result.
   4. Two-moons decision surface with the K-means centres overlaid.
@@ -15,10 +16,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.datasets import load_digits, make_moons
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.datasets import make_moons
 
+from common.letters import build_letters
+from common.metrics import binary_scores
 from practice_4_rbf.rbf import RBFConfig, RBFNet
 
 OUT = Path(__file__).resolve().parents[1] / "outputs"
@@ -48,57 +49,71 @@ def sine_panel():
     plt.close(fig)
 
 
-def digits_data(seed=0):
-    d = load_digits()
-    X = StandardScaler().fit_transform(d.data)
-    y = d.target.astype(np.int64)
-    return train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
+def _softmax(z):
+    z = z - z.max(axis=1, keepdims=True)
+    e = np.exp(z)
+    return e / e.sum(axis=1, keepdims=True)
 
 
-def digits_panel():
-    """Handwritten digit classification — the real task."""
-    Xtr, Xte, ytr, yte = digits_data()
+def letters_panel(split):
+    """Letters classification — the real task."""
+    Xtr, ytr = split.X_train, split.y_train
+    Xte, yte = split.X_test, split.y_test
+    n_classes = split.n_classes
+    Ytr = np.eye(n_classes)[ytr]
     ks = [10, 30, 60, 120]
     train_accs, test_accs, times = [], [], []
+    bal_accs, aucs = [], []
 
     for k in ks:
-        # One-vs-rest RBF: 10 separate binary RBF nets, one per class.
         t0 = time.perf_counter()
-        nets = []
-        for c in range(10):
-            net = RBFNet(RBFConfig(n_centres=k, output_solver="lstsq"))
-            net.fit(Xtr, (ytr == c).astype(np.float64))
-            nets.append(net)
+        net = RBFNet(RBFConfig(n_centres=k, output_solver="lstsq")).fit(Xtr, Ytr)
         t = time.perf_counter() - t0
-        # Predict: argmax over per-class RBF outputs.
-        Pte = np.column_stack([n.predict(Xte) for n in nets])
-        Ptr = np.column_stack([n.predict(Xtr) for n in nets])
+        Pte = net.predict(Xte)
+        Ptr = net.predict(Xtr)
         test_accs.append(float((Pte.argmax(1) == yte).mean()))
         train_accs.append(float((Ptr.argmax(1) == ytr).mean()))
         times.append(t)
+        # "find the letter X" score: softmax over the 26 read-out values.
+        probs = _softmax(Pte / 0.1)
+        p_x = probs[:, split.target_index]
+        dec = (Pte.argmax(1) == split.target_index).astype(float)
+        m = binary_scores(split.binary_targets("test"), p_x, decision=dec)
+        bal_accs.append(m["balanced_accuracy"])
+        aucs.append(m["auc"])
         print(f"centres={k:4d} | train={train_accs[-1]:.3f} | "
-              f"test={test_accs[-1]:.3f} | {t*1000:.0f} ms")
+              f"test={test_accs[-1]:.3f} | bal_acc(X)={bal_accs[-1]:.3f} | "
+              f"AUC={m['auc']:.3f} | {t*1000:.0f} ms")
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
     x = np.arange(len(ks))
     w = 0.4
     axes[0].bar(x - w/2, train_accs, w, label="train", color="C0")
     axes[0].bar(x + w/2, test_accs,  w, label="test",  color="C3")
     axes[0].set_xticks(x); axes[0].set_xticklabels([str(k) for k in ks])
     axes[0].set_xlabel("number of RBF centres")
-    axes[0].set_ylabel("accuracy")
-    axes[0].set_title("Digits (8×8, 10 classes) — accuracy vs centres")
+    axes[0].set_ylabel("accuracy (26 classes)")
+    axes[0].set_title("Letters — accuracy vs centres")
     axes[0].legend(); axes[0].grid(axis="y", alpha=0.3)
-    axes[0].set_ylim(0.5, 1.0)
+    axes[0].set_ylim(0.2, 1.0)
 
-    axes[1].bar(x, [t * 1000 for t in times], color="C2")
+    axes[1].bar(x, bal_accs, color="C2", label="balanced acc (find X)")
+    axes[1].plot(x, aucs, "o--", color="C3", label="ROC-AUC")
     axes[1].set_xticks(x); axes[1].set_xticklabels([str(k) for k in ks])
     axes[1].set_xlabel("number of RBF centres")
-    axes[1].set_ylabel("training time (ms)")
-    axes[1].set_title("Training time vs centres (K-means + lstsq)")
-    axes[1].grid(axis="y", alpha=0.3)
+    axes[1].set_ylabel("score")
+    axes[1].set_title("Finding the letter X")
+    axes[1].set_ylim(0.2, 1.05)
+    axes[1].legend(fontsize=8); axes[1].grid(axis="y", alpha=0.3)
+
+    axes[2].bar(x, [t * 1000 for t in times], color="C1")
+    axes[2].set_xticks(x); axes[2].set_xticklabels([str(k) for k in ks])
+    axes[2].set_xlabel("number of RBF centres")
+    axes[2].set_ylabel("training time (ms)")
+    axes[2].set_title("Training time vs centres (K-means + lstsq)")
+    axes[2].grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(OUT / "p4_digits.png", dpi=120)
+    fig.savefig(OUT / "p4_letters.png", dpi=120)
     plt.close(fig)
 
 
@@ -110,13 +125,13 @@ def solver_panel():
     t0 = time.perf_counter()
     net_ls = RBFNet(RBFConfig(n_centres=n_centres, output_solver="lstsq")).fit(X, y)
     t_ls = time.perf_counter() - t0
-    acc_ls = float(((net_ls.predict(X) >= 0.5) == y).mean())
+    acc_ls = float(((net_ls.predict(X).ravel() >= 0.5) == y).mean())
 
     t0 = time.perf_counter()
     net_gd = RBFNet(RBFConfig(n_centres=n_centres, output_solver="gradient",
                               output_lr=0.1, output_epochs=300)).fit(X, y)
     t_gd = time.perf_counter() - t0
-    acc_gd = float(((net_gd.predict(X) >= 0.5) == y).mean())
+    acc_gd = float(((net_gd.predict(X).ravel() >= 0.5) == y).mean())
 
     print(f"closed-form: {t_ls*1000:.1f} ms, acc={acc_ls:.3f}")
     print(f"gradient   : {t_gd*1000:.1f} ms, acc={acc_gd:.3f}")
@@ -138,9 +153,33 @@ def solver_panel():
     plt.close(fig)
 
 
+def centres_panel(split):
+    """What do the K-means centres look like? (the X-like prototypes)"""
+    Xtr, ytr = split.X_train, split.y_train
+    n_classes = split.n_classes
+    net = RBFNet(RBFConfig(n_centres=60, output_solver="lstsq")).fit(
+        Xtr, np.eye(n_classes)[ytr])
+    w = net.W                      # (n_centres, n_classes)
+    order = np.argsort(-w[:, split.target_index])
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.8))
+    for ax, k in zip(axes, order[:3]):
+        c = net.centres[k].reshape(28, 28)
+        ax.imshow(c, cmap="gray_r", vmin=0, vmax=1)
+        ax.set_title(f"centre #{k}\nread-out on X = {w[k, split.target_index]:.2f}",
+                     fontsize=9)
+        ax.axis("off")
+    fig.suptitle("K-means centres that fire on the letter X", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(OUT / "p4_centres.png", dpi=120)
+    plt.close(fig)
+
+
 def main():
+    print("rendering letters dataset…")
+    split = build_letters(seed=0)
     sine_panel()
-    digits_panel()
+    letters_panel(split)
+    centres_panel(split)
     solver_panel()
     print("figures written to:", OUT)
 

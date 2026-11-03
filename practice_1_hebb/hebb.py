@@ -1,98 +1,109 @@
-"""Hebb's rule and Oja's rule for associative memory.
+"""Hebbian learning (rule of Hebb, 1949) — one output neuron per letter.
 
-Pure NumPy. Trains a weight matrix W from a set of bipolar (+1/-1) or
-real-valued patterns. After training, recall y = sign(W @ x) recovers the
-stored pattern closest to x (with some noise).
+The idea in one line: "cells that fire together, wire together".
 
-Without normalisation Hebbian weights grow without bound and saturate.
-Oja's rule is the classic fix: keep the spectral norm of W bounded.
+For a picture `x` and the *clamped* output neuron `c` (the class the
+picture belongs to), the update is
+
+    ΔW[c] = η · x
+
+i.e. the weight vector of the winning class grows in the direction of the
+picture it just saw. After training, each row of `W` is (up to a scale
+factor) the average picture of its class — a prototype the network learned
+by itself, without any gradient and without a learning-rate schedule.
+
+There is no Oja rule here on purpose. Plain Hebb grows the weights without
+bound, so the *decision* step normalises the row to unit length (cosine
+similarity) instead of shrinking the weights during training. That keeps
+the update rule textbook-Hebb and still gives a usable classifier.
+
+Reading out a class:
+
+    s_c(x) = cos(W[c], x)          similarity with the learned prototype
+    P(class | x) = softmax_c(s_c(x) / T)
+
+The same network answers the "find the letter X" question: P(X) is the
+softmax weight of the X neuron.
 """
 from __future__ import annotations
 
 import numpy as np
 
 
-class HebbianNetwork:
-    """Tiny associative-memory network.
+def _softmax(z: np.ndarray, axis: int = -1) -> np.ndarray:
+    z = z - z.max(axis=axis, keepdims=True)
+    e = np.exp(z)
+    return e / e.sum(axis=axis, keepdims=True)
 
-    Stores n_input-dimensional patterns as columns of a (n_input x n_input)
-    weight matrix W. Recall rule is sign(W @ x).
 
-    Two update rules are supported:
-      - "hebb":  ΔW = η · x · xᵀ             (weights blow up)
-      - "oja":   ΔW = η · (x · xᵀ − W · x²)  (Oja, stable)
+class HebbianClassifier:
+    """Associative-memory-style classifier trained with the pure Hebb rule.
+
+    Parameters
+    ----------
+    n_classes : how many output neurons (one per letter).
+    n_input   : dimensionality of the input picture (784 for 28x28).
+    eta       : learning rate of the Hebbian update.
+    temperature : softmax temperature used when turning similarities into
+                  probabilities. Lower = sharper decisions.
     """
 
-    def __init__(self, n_input: int, rule: str = "oja", eta: float = 0.01):
-        if rule not in {"hebb", "oja"}:
-            raise ValueError(f"unknown rule: {rule!r}")
-        self.n_input = n_input
-        self.rule = rule
-        self.eta = eta
-        self.W = np.zeros((n_input, n_input), dtype=np.float64)
+    def __init__(self, n_classes: int, n_input: int, eta: float = 0.05,
+                 temperature: float = 0.05):
+        self.n_classes = int(n_classes)
+        self.n_input = int(n_input)
+        self.eta = float(eta)
+        self.temperature = float(temperature)
+        self.W = np.zeros((self.n_classes, self.n_input), dtype=np.float64)
+        self.classes_seen: list[int] = []
 
     # ------------------------------------------------------------------ train
-    def train(self, patterns: np.ndarray, epochs: int = 1) -> None:
-        """patterns: shape (n_patterns, n_input). One Hebbian sweep = one epoch."""
-        patterns = np.asarray(patterns, dtype=np.float64)
-        eta = self.eta
-        W = self.W
-        rule = self.rule
+    def train(self, X: np.ndarray, y: np.ndarray, epochs: int = 1) -> None:
+        """X: (n, n_input) pictures, y: (n,) integer class labels."""
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
         for _ in range(epochs):
-            for x in patterns:
-                # outer product x · xᵀ
-                outer = np.outer(x, x)
-                if rule == "hebb":
-                    W += eta * outer
-                else:  # oja
-                    y = W @ x                  # recall vector (length n_input)
-                    W += eta * (np.outer(x, x) - np.outer(y, x))
+            for x, t in zip(X, y):
+                # Hebb with the output clamped to the correct class:
+                # the winner's weight vector moves towards this picture.
+                self.W[t] += self.eta * x
+        self.classes_seen = sorted(set(int(v) for v in np.unique(y)))
 
-    # ------------------------------------------------------------------ recall
-    def recall(self, x: np.ndarray, threshold: float = 0.0) -> np.ndarray:
-        """One synchronous recall step. Returns sign(W @ x)."""
-        x = np.asarray(x, dtype=np.float64)
-        y = self.W @ x
-        return np.where(y >= threshold, 1.0, -1.0)
+    # -------------------------------------------------------------- inference
+    def similarities(self, X: np.ndarray) -> np.ndarray:
+        """Cosine similarity between every picture and every prototype."""
+        X = np.asarray(X, dtype=np.float64)
+        norms = np.linalg.norm(self.W, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        xn = np.linalg.norm(X, axis=1, keepdims=True)
+        xn[xn == 0] = 1.0
+        return (X @ self.W.T) / (xn * norms.T)
 
-    def recall_iterative(self, x: np.ndarray, steps: int = 5) -> np.ndarray:
-        """Asynchronous recall: each step updates one component of x by sign(W @ x)."""
-        x = np.asarray(x, dtype=np.float64).copy()
-        for _ in range(steps):
-            y = self.W @ x
-            # Update the most "undecided" component each step.
-            i = int(np.argmin(np.abs(y)))
-            x[i] = 1.0 if y[i] >= 0 else -1.0
-        return x
+    def probabilities(self, X: np.ndarray) -> np.ndarray:
+        """Softmax over the cosine similarities."""
+        return _softmax(self.similarities(X) / self.temperature, axis=1)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return np.argmax(self.similarities(X), axis=1)
+
+    def p_target(self, X: np.ndarray, target_index: int) -> np.ndarray:
+        """Probability that each picture belongs to `target_index`."""
+        return self.probabilities(X)[:, target_index]
 
     # ----------------------------------------------------------- diagnostics
-    def pattern_overlap(self, patterns: np.ndarray) -> np.ndarray:
-        """Return mean |cosine| between every stored pattern and its recall.
+    def prototype(self, class_index: int) -> np.ndarray:
+        """The learned prototype of a class as a picture in [0, 1]."""
+        w = self.W[class_index]
+        w = w - w.min()
+        mx = w.max()
+        return w / mx if mx > 0 else w
 
-        1.0 = perfect recall; 0.0 = orthogonal (forgot).
-        """
-        patterns = np.asarray(patterns, dtype=np.float64)
-        recalls = np.array([self.recall(p) for p in patterns])
-        # Normalised patterns so cosine = dot product
-        p_norm = patterns / np.linalg.norm(patterns, axis=1, keepdims=True)
-        r_norm = recalls / np.linalg.norm(recalls, axis=1, keepdims=True)
-        return np.abs(np.einsum("ij,ij->i", p_norm, r_norm))
+    def weight_norm(self) -> float:
+        """Frobenius norm of W — grows without bound under plain Hebb."""
+        return float(np.linalg.norm(self.W))
 
-    def noisy_recovery(self, patterns: np.ndarray, noise: float = 0.2,
-                       n_trials: int = 200) -> float:
-        """Flip `noise` fraction of bits in a random stored pattern and ask
-        the network to recover it. Return fraction of bits correctly recovered."""
-        patterns = np.asarray(patterns, dtype=np.float64)
-        n_pat, n_in = patterns.shape
-        rng = np.random.default_rng(0)
-        correct = 0
-        total = 0
-        for _ in range(n_trials):
-            pat = patterns[rng.integers(n_pat)]
-            mask = rng.random(n_in) < noise
-            noisy = pat.copy()
-            noisy[mask] *= -1
-            recalled = self.recall_iterative(noisy)
-            correct += np.sum(recalled == pat)
-            total += n_in
-        return correct / total
+    def pca_axes(self, k: int = 2) -> np.ndarray:
+        """First k principal directions of the learned prototypes."""
+        W = self.W - self.W.mean(axis=0, keepdims=True)
+        u, s, vt = np.linalg.svd(W, full_matrices=False)
+        return vt[:k]

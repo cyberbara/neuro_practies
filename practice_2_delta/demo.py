@@ -1,10 +1,10 @@
 """Demo for practice 2: delta-rule perceptron.
 
-Three experiments:
-  1. AND / OR / NAND / XOR — classical lesson. XOR doesn't converge.
-  2. Breast-cancer Wisconsin — real binary classification (30 features).
-     Train/test split, η sweep, convergence on a real linear-ish problem.
-  3. Effect of weight initialisation on the toy AND task.
+Two experiments:
+  1. AND / OR / NAND / XOR — classical lesson. XOR never converges, because
+     one neuron draws one straight line.
+  2. The real task: **find the letter X** on the letters dataset. One
+     sigmoid neuron, 784 inputs, trained with Widrow-Hoff.
 """
 from __future__ import annotations
 
@@ -13,10 +13,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.datasets import load_breast_cancer
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 
+from common.letters import SIZE, build_letters
+from common.metrics import binary_scores
 from practice_2_delta.perceptron import Perceptron, toy
 
 OUT = Path(__file__).resolve().parents[1] / "outputs"
@@ -39,13 +38,6 @@ def run_toy(name, eta=0.5, epochs=200):
     res = model.fit(X, y, epochs=epochs, log_every=1)
     dt = time.perf_counter() - t0
     return X, y, model, res, dt
-
-
-def breast_cancer_data(seed=0):
-    d = load_breast_cancer()
-    X = StandardScaler().fit_transform(d.data)
-    y = d.target.astype(np.float64)
-    return train_test_split(X, y, test_size=0.25, random_state=seed, stratify=y)
 
 
 def toy_panel():
@@ -76,44 +68,95 @@ def toy_panel():
     plt.close(fig)
 
 
-def breast_cancer_panel():
-    """Real binary classification: breast_cancer, 30 features."""
-    Xtr, Xte, ytr, yte = breast_cancer_data()
-    etas = [0.01, 0.05, 0.1, 0.5]
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+def letters_panel(split):
+    """The real task: one neuron that finds the letter X."""
+    Xtr, ytr = split.X_train, split.binary_targets("train")
+    Xte, yte = split.X_test, split.binary_targets("test")
+    etas = [0.05, 0.1, 0.5, 1.0]
 
-    # Left: train/test accuracy curves for each eta
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+
+    # Left: learning curves for several eta (train / test MSE)
     for eta in etas:
         net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid",
-                          eta=eta, seed=0)
-        res = net.fit(Xtr, ytr, Xte, yte, epochs=300)
-        axes[0].plot(res.train_acc_history, label=f"η={eta} train")
-        axes[0].plot(res.test_acc_history,  label=f"η={eta} test", linestyle="--")
+                         eta=eta, seed=0)
+        res = net.fit(Xtr, ytr, epochs=60, log_every=1)
+        axes[0].plot(res.mse_history, label=f"η={eta}")
     axes[0].set_xlabel("epoch")
-    axes[0].set_ylabel("accuracy")
-    axes[0].set_title("Breast-cancer Wisconsin — convergence vs η")
-    axes[0].legend(fontsize=8, ncol=2)
+    axes[0].set_ylabel("train MSE")
+    axes[0].set_title("Delta rule on letters — convergence vs η")
+    axes[0].legend(fontsize=8)
     axes[0].grid(alpha=0.3)
 
-    # Right: final accuracy bar chart
-    final_train, final_test = [], []
+    # Middle: score distribution for X vs the rest
+    net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid", eta=0.5,
+                     seed=0)
+    net.fit(Xtr, ytr, epochs=60)
+    p = net.predict_proba(Xte)
+    axes[1].hist(p[yte == 0], bins=40, alpha=0.7, label="not X", color="tab:blue")
+    axes[1].hist(p[yte == 1], bins=40, alpha=0.8, label="X", color="tab:red")
+    axes[1].axvline(0.5, color="k", ls="--", lw=1)
+    axes[1].set_xlabel("neuron output")
+    axes[1].set_title("One neuron separates X from the rest")
+    axes[1].legend(fontsize=9)
+
+    # Right: final metrics per eta
+    names, bal, auc = [], [], []
     for eta in etas:
-        net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid",
-                          eta=eta, seed=0)
-        res = net.fit(Xtr, ytr, Xte, yte, epochs=300)
-        final_train.append(res.train_acc_history[-1])
-        final_test.append(res.test_acc_history[-1])
+        n2 = Perceptron(n_input=Xtr.shape[1], activation="sigmoid", eta=eta,
+                        seed=0)
+        n2.fit(Xtr, ytr, epochs=60)
+        m = binary_scores(yte, n2.predict_proba(Xte))
+        names.append(f"η={eta}")
+        bal.append(m["balanced_accuracy"])
+        auc.append(m["auc"])
     x = np.arange(len(etas))
-    w = 0.4
-    axes[1].bar(x - w/2, final_train, w, label="train", color="C0")
-    axes[1].bar(x + w/2, final_test,  w, label="test",  color="C3")
-    axes[1].set_xticks(x); axes[1].set_xticklabels([f"η={e}" for e in etas])
-    axes[1].set_ylabel("accuracy"); axes[1].set_ylim(0.85, 1.0)
-    axes[1].set_title("Final train/test accuracy")
-    axes[1].legend(); axes[1].grid(axis="y", alpha=0.3)
+    axes[2].bar(x - 0.2, bal, 0.4, label="balanced accuracy", color="C0")
+    axes[2].bar(x + 0.2, auc, 0.4, label="ROC-AUC", color="C2")
+    axes[2].set_xticks(x); axes[2].set_xticklabels(names)
+    axes[2].set_ylim(0, 1.05)
+    axes[2].set_ylabel("score")
+    axes[2].set_title("Test scores vs learning rate")
+    axes[2].legend(fontsize=8)
+    axes[2].grid(axis="y", alpha=0.3)
+    fig.suptitle("Practice 2 — one neuron hunting the letter X", fontsize=13)
     fig.tight_layout()
-    fig.savefig(OUT / "p2_breast.png", dpi=120)
+    fig.savefig(OUT / "p2_letters.png", dpi=120)
     plt.close(fig)
+
+
+def weight_map(split):
+    """What did the single neuron learn to look at?"""
+    Xtr, ytr = split.X_train, split.binary_targets("train")
+    net = Perceptron(n_input=Xtr.shape[1], activation="sigmoid", eta=0.5,
+                     seed=0)
+    net.fit(Xtr, ytr, epochs=60)
+
+    # average the positive and negative weights into pictures
+    w_pos = net.W.reshape(-1).copy()
+    pos_mask = Xtr.sum(axis=1) > 0        # ink present
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.8))
+
+    w = net.W.reshape(SIZE, SIZE)
+    vmax = np.abs(w).max()
+    axes[0].imshow(w, cmap="gray_r", vmin=-vmax, vmax=vmax)
+    axes[0].set_title("weights W (784)")
+    axes[0].axis("off")
+
+    # mean picture of X vs mean picture of the rest
+    Xtr2 = Xtr.reshape(-1, SIZE, SIZE)
+    is_x = ytr == 1
+    axes[1].imshow(Xtr2[is_x].mean(axis=0), cmap="gray_r", vmin=0, vmax=1)
+    axes[1].set_title("mean picture of X")
+    axes[1].axis("off")
+    axes[2].imshow(Xtr2[~is_x].mean(axis=0), cmap="gray_r", vmin=0, vmax=1)
+    axes[2].set_title("mean picture of the rest")
+    axes[2].axis("off")
+    fig.suptitle("What the single neuron weights look like", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(OUT / "p2_weights.png", dpi=120)
+    plt.close(fig)
+    del w_pos, pos_mask
 
 
 def init_sweep():
@@ -136,8 +179,11 @@ def init_sweep():
 
 
 def main():
+    print("rendering letters dataset…")
+    split = build_letters(seed=0)
     toy_panel()
-    breast_cancer_panel()
+    letters_panel(split)
+    weight_map(split)
     init_sweep()
     print("figures written to:", OUT)
 

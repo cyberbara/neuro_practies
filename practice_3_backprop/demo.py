@@ -1,14 +1,16 @@
-"""Demo for practice 3: MLP backprop on Fashion-MNIST.
+"""Demo for practice 3: MLP backprop on the letters dataset.
 
 Five experiments:
-  1. Hidden-size sweep (32 / 64 / 128 / 256) on a 2-layer MLP.
+  1. Hidden-size sweep (32 / 64 / 128 / 256).
   2. Activation comparison (ReLU vs Tanh).
   3. Optimiser comparison (SGD vs Adam).
   4. Dropout (0.0 / 0.25 / 0.5).
   5. Data augmentation (random shift + rotation) — shows the
      overfitting-reduction effect.
 
-Each experiment logs train/test curves and saves a separate plot.
+The network classifies all 26 letters; the headline number for the repo is
+the "find the letter X" score: softmax probability of the X neuron, with the
+decision "argmax == X".
 """
 from __future__ import annotations
 
@@ -21,7 +23,9 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from practice_3_backprop.mlp import MLP, fit, load_fashion_mnist
+from common.letters import build_letters
+from common.metrics import binary_scores
+from practice_3_backprop.mlp import MLP, count_params, fit, load_letters_tensors
 
 OUT = Path(__file__).resolve().parents[1] / "outputs"
 OUT.mkdir(exist_ok=True)
@@ -74,7 +78,7 @@ def augment_batch(x_flat: torch.Tensor) -> torch.Tensor:
     """Reshape (N, D) to (N, 1, S, S), random-shift, rotate, flatten back.
 
     S is inferred from D, so this works for 8x8 digits (D=64) and 28x28
-    Fashion-MNIST (D=784) alike.
+    letters (D=784) alike.
     """
     n, d = x_flat.shape
     side = int(round(d ** 0.5))
@@ -122,26 +126,39 @@ def fit_with_augment(model, Xtr, ytr, Xte, yte, epochs=8, batch_size=128,
             out = model(Xte)
             history["test_loss"].append(loss_fn(out, yte).item())
             history["test_acc"].append((out.argmax(1) == yte).float().mean().item())
-    from practice_3_backprop.mlp import FitResult, count_params
+    from practice_3_backprop.mlp import FitResult
     return FitResult(history, count_params(model), 0.0)
 
 
+def x_scores(model, Xte, target_index):
+    """Softmax probability of the X class + the argmax decision."""
+    model.eval()
+    with torch.no_grad():
+        probs = torch.softmax(model(Xte), dim=1).cpu().numpy()
+    pred = probs.argmax(1)
+    return probs[:, target_index], (pred == target_index).astype(float)
+
+
 def main():
-    print("loading Fashion-MNIST…")
-    Xtr, ytr, Xte, yte = load_fashion_mnist()
-    Xtr, ytr, Xte, yte = Xtr.to(DEVICE), ytr.to(DEVICE), Xte.to(DEVICE), yte.to(DEVICE)
+    print("rendering letters dataset…")
+    split = build_letters(seed=0)
+    Xtr, ytr, Xte, yte = load_letters_tensors(split, DEVICE)
     print(f"train: {Xtr.shape}, test: {Xte.shape}")
     n_in = Xtr.shape[1]
     n_out = int(max(ytr.max(), yte.max()).item()) + 1
+    target_index = split.target_index
+    y_true_bin = split.binary_targets("test")
 
     # 1. Hidden-size sweep
     for h in (32, 64, 128, 256):
         torch.manual_seed(0)
         model = MLP(n_in=n_in, n_hidden=h, n_out=n_out, activation="relu").to(DEVICE)
-        res = fit(model, Xtr, ytr, Xte, yte, epochs=5, optimiser="adam", lr=1e-3)
+        res = fit(model, Xtr, ytr, Xte, yte, epochs=25, optimiser="adam", lr=1e-3)
+        p_x, dec = x_scores(model, Xte, target_index)
+        m = binary_scores(y_true_bin, p_x, decision=dec)
         print(f"hidden={h:3d} | params={res.params:>7d} | "
-              f"train_acc={res.history['train_acc'][-1]:.3f} | "
               f"test_acc={res.history['test_acc'][-1]:.3f} | "
+              f"bal_acc(X)={m['balanced_accuracy']:.3f} | "
               f"time={res.wall_time:.1f}s")
         plot_curves(res.history, f"hidden={h}", OUT / f"p3_hidden_{h}.png")
 
@@ -149,17 +166,23 @@ def main():
     for act in ("relu", "tanh"):
         torch.manual_seed(0)
         model = MLP(n_in=n_in, n_hidden=128, n_out=n_out, activation=act).to(DEVICE)
-        res = fit(model, Xtr, ytr, Xte, yte, epochs=5, optimiser="adam", lr=1e-3)
-        print(f"{act:5s} | final test_acc={res.history['test_acc'][-1]:.3f}")
+        res = fit(model, Xtr, ytr, Xte, yte, epochs=25, optimiser="adam", lr=1e-3)
+        p_x, dec = x_scores(model, Xte, target_index)
+        m = binary_scores(y_true_bin, p_x, decision=dec)
+        print(f"{act:5s} | final test_acc={res.history['test_acc'][-1]:.3f} | "
+              f"bal_acc(X)={m['balanced_accuracy']:.3f}")
         plot_curves(res.history, f"activation={act}", OUT / f"p3_act_{act}.png")
 
     # 3. Optimiser comparison
     for opt in ("sgd", "adam"):
         torch.manual_seed(0)
         model = MLP(n_in=n_in, n_hidden=128, n_out=n_out, activation="relu").to(DEVICE)
-        res = fit(model, Xtr, ytr, Xte, yte, epochs=5, optimiser=opt,
+        res = fit(model, Xtr, ytr, Xte, yte, epochs=25, optimiser=opt,
                   lr=1e-2 if opt == "sgd" else 1e-3)
-        print(f"{opt:5s} | final test_acc={res.history['test_acc'][-1]:.3f}")
+        p_x, dec = x_scores(model, Xte, target_index)
+        m = binary_scores(y_true_bin, p_x, decision=dec)
+        print(f"{opt:5s} | final test_acc={res.history['test_acc'][-1]:.3f} | "
+              f"bal_acc(X)={m['balanced_accuracy']:.3f}")
         plot_curves(res.history, f"optimiser={opt}", OUT / f"p3_opt_{opt}.png")
 
     # 4. Dropout sweep
@@ -167,8 +190,11 @@ def main():
         torch.manual_seed(0)
         model = MLP(n_in=n_in, n_hidden=256, n_out=n_out, activation="relu",
                     dropout=p).to(DEVICE)
-        res = fit(model, Xtr, ytr, Xte, yte, epochs=8, optimiser="adam", lr=1e-3)
-        print(f"dropout={p:.2f} | final test_acc={res.history['test_acc'][-1]:.3f}")
+        res = fit(model, Xtr, ytr, Xte, yte, epochs=25, optimiser="adam", lr=1e-3)
+        p_x, dec = x_scores(model, Xte, target_index)
+        m = binary_scores(y_true_bin, p_x, decision=dec)
+        print(f"dropout={p:.2f} | final test_acc={res.history['test_acc'][-1]:.3f} | "
+              f"bal_acc(X)={m['balanced_accuracy']:.3f}")
         plot_curves(res.history, f"dropout={p}", OUT / f"p3_drop_{p:.2f}.png")
 
     # 5. Augmentation comparison
@@ -179,12 +205,15 @@ def main():
         model = MLP(n_in=n_in, n_hidden=256, n_out=n_out, activation="relu",
                     dropout=0.25).to(DEVICE)
         if augment:
-            res = fit_with_augment(model, Xtr, ytr, Xte, yte, epochs=12)
+            res = fit_with_augment(model, Xtr, ytr, Xte, yte, epochs=40)
         else:
-            res = fit(model, Xtr, ytr, Xte, yte, epochs=12,
+            res = fit(model, Xtr, ytr, Xte, yte, epochs=40,
                       optimiser="adam", lr=1e-3)
         histories[label] = res.history
-        print(f"{label:14s} | final test_acc={res.history['test_acc'][-1]:.3f}")
+        p_x, dec = x_scores(model, Xte, target_index)
+        m = binary_scores(y_true_bin, p_x, decision=dec)
+        print(f"{label:14s} | final test_acc={res.history['test_acc'][-1]:.3f} | "
+              f"bal_acc(X)={m['balanced_accuracy']:.3f}")
     for label, h in histories.items():
         axes[0].plot(h["train_acc"], label=label)
         axes[0].plot(h["test_acc"],  label=f"{label} (test)", linestyle="--")
@@ -196,6 +225,35 @@ def main():
     axes[1].set_title("Augmentation — loss"); axes[1].legend(); axes[1].grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(OUT / "p3_augment.png", dpi=120)
+    plt.close(fig)
+
+    # 6. X-detector view: score distribution + example pictures
+    torch.manual_seed(0)
+    model = MLP(n_in=n_in, n_hidden=128, n_out=n_out, activation="relu").to(DEVICE)
+    fit(model, Xtr, ytr, Xte, yte, epochs=25, optimiser="adam", lr=1e-3)
+    p_x, dec = x_scores(model, Xte, target_index)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
+    axes[0].hist(p_x[y_true_bin == 0], bins=40, alpha=0.7, label="not X",
+                 color="tab:blue")
+    axes[0].hist(p_x[y_true_bin == 1], bins=40, alpha=0.8, label="X",
+                 color="tab:red")
+    axes[0].set_xlabel("P(X)")
+    axes[0].set_title("score distribution")
+    axes[0].legend(fontsize=9)
+    Xte_np = split.X_test
+    order = np.argsort(-p_x)
+    tp = next(i for i in order if y_true_bin[i] == 1)
+    fp = next(i for i in order if y_true_bin[i] == 0)
+    axes[1].imshow(Xte_np[tp].reshape(28, 28), cmap="gray_r", vmin=0, vmax=1)
+    axes[1].set_title(f"true X\nP={p_x[tp]:.2f}", fontsize=9, color="tab:red")
+    axes[2].imshow(Xte_np[fp].reshape(28, 28), cmap="gray_r", vmin=0, vmax=1)
+    axes[2].set_title(f"actually {split.char_test[fp]}\nP(X)={p_x[fp]:.2f}",
+                      fontsize=9, color="tab:blue")
+    for a in axes[1:]:
+        a.axis("off")
+    fig.suptitle("Backprop MLP finds the letter X", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(OUT / "p3_detection.png", dpi=120)
     plt.close(fig)
 
     print("figures written to:", OUT)

@@ -1,4 +1,4 @@
-"""Multi-layer perceptron trained with backprop on Fashion-MNIST (or MNIST).
+"""Multi-layer perceptron trained with backprop.
 
 Built on PyTorch. Trains two hidden-layer MLPs and varies:
   - hidden size
@@ -7,6 +7,11 @@ Built on PyTorch. Trains two hidden-layer MLPs and varies:
   - dropout probability
 
 Records train/test accuracy per epoch and produces learning curves.
+
+The data is the shared letters dataset (see `common/letters.py`): 26
+uppercase letters, 28x28, train fonts differ from test fonts. The network
+classifies the letter; the headline task of the repo — "find the letter X" —
+is answered by the softmax probability of the X neuron.
 """
 from __future__ import annotations
 
@@ -25,44 +30,13 @@ class FitResult:
     wall_time: float       # seconds
 
 
-def load_fashion_mnist(limit_train: int | None = 30_000,
-                       limit_test: int | None = 5_000,
-                       seed: int = 0):
-    """Load Fashion-MNIST. Tries torchvision first, falls back to a small
-    sklearn-style synthetic dataset if torchvision isn't installed."""
-    try:
-        from torchvision import datasets, transforms
-        tx = transforms.Compose([transforms.ToTensor()])
-        train = datasets.FashionMNIST(root="~/.cache/torchvision",
-                                       train=True, download=True, transform=tx)
-        test = datasets.FashionMNIST(root="~/.cache/torchvision",
-                                      train=False, download=True, transform=tx)
-        Xtr = train.data.float() / 255.0
-        ytr = train.targets.long()
-        Xte = test.data.float() / 255.0
-        yte = test.targets.long()
-    except Exception:
-        # Synthetic fallback: 8x8 digits-like blobs.
-        rng = np.random.default_rng(seed)
-        from sklearn.datasets import load_digits
-        d = load_digits()
-        X = d.data / 16.0
-        y = d.target.astype(np.int64)
-        n = X.shape[0]
-        idx = rng.permutation(n)
-        split = int(n * 0.7)
-        Xtr = torch.tensor(X[idx[:split]], dtype=torch.float32)
-        ytr = torch.tensor(y[idx[:split]], dtype=torch.long)
-        Xte = torch.tensor(X[idx[split:]], dtype=torch.float32)
-        yte = torch.tensor(y[idx[split:]], dtype=torch.long)
-
-    if limit_train:
-        Xtr, ytr = Xtr[:limit_train], ytr[:limit_train]
-    if limit_test:
-        Xte, yte = Xte[:limit_test], yte[:limit_test]
-    # Flatten to (N, 784) for the MLP.
-    return (Xtr.view(Xtr.size(0), -1), ytr,
-            Xte.view(Xte.size(0), -1), yte)
+def load_letters_tensors(split, device: str = "cpu"):
+    """Turn a LetterSplit into flattened float32 tensors."""
+    Xtr = torch.tensor(split.X_train, dtype=torch.float32, device=device)
+    ytr = torch.tensor(split.y_train, dtype=torch.long, device=device)
+    Xte = torch.tensor(split.X_test, dtype=torch.float32, device=device)
+    yte = torch.tensor(split.y_test, dtype=torch.long, device=device)
+    return Xtr, ytr, Xte, yte
 
 
 class MLP(nn.Module):

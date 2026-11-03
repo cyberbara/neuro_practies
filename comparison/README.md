@@ -1,40 +1,75 @@
 # Comparison benchmark
 
-**Goal:** put all five practices on the same table.
+**Goal:** put all five practices on the same table — same data, same task,
+same metric.
 
-`python -m comparison.benchmark` runs each practice on its **real** task,
-measures training wall-clock time, parameter count, neuron count and a
-problem-specific quality metric, then writes:
+`python -m comparison.benchmark` runs every practice on the **letters
+dataset** and asks each one the same question: **is this picture the
+letter X?**
+
+It then writes:
 
 - `outputs/benchmark.csv` — the table.
-- `outputs/comparison_bars.png` — three panels: time, parameters, score.
-- `outputs/comparison_scatter.png` — time vs score, bubble size ∝ log params.
+- `outputs/comparison_bars.png` — three panels: quality, time, parameters.
+- `outputs/comparison_scatter.png` — time vs quality, bubble size ∝ log params.
 
-## Tasks per practice
+## The shared setup
 
-| # | practice | dataset | metric |
-|---|---|---|---|
-| 1 | `1_hebb_letters` | 40 PIL letter renders (10 letters × 4 fonts, 28×28) | `recovery_rate` under 20% pixel noise |
-| 2 | `2_delta_breast` | breast-cancer Wisconsin, 30 features, 25% test split | `test_accuracy` |
-| 3 | `3_backprop_mlp` | Fashion-MNIST 10k subset, 64-hidden MLP, 3 epochs | `test_accuracy` |
-| 4 | `4_rbf_digits` | sklearn digits, 60 centres/class, one-vs-rest ×10 | `test_accuracy` |
-| 5 | `5_som_digits` | sklearn digits, 16×16 map, 60 epochs | `quantisation_error` (lower is better) |
+| what | value |
+|---|---|
+| dataset | 26 uppercase letters, 28×28 binary, rendered with PIL from system fonts |
+| train fonts | Carlito (4 styles) + Liberation Sans (4 styles) |
+| test fonts | Liberation Serif (3 styles) + FreeSans (3 styles) — **never seen in training** |
+| train size | 2 496 pictures (96 of them an X) |
+| test size | 624 pictures (24 of them an X) |
+| task | binary: X vs not-X |
+| headline metric | **balanced accuracy** |
+
+Balanced accuracy, not plain accuracy: X is 1 class out of 26, so a network
+that always says "not X" already scores 96% plain accuracy. Balanced
+accuracy weighs "found the X" against "left the others alone" equally —
+which is exactly the question the practice asks.
+
+## Results
+
+| practice | params | neurons | train time | balanced acc | AUC | recall(X) | precision(X) | 26-class acc |
+|---|---|---|---|---|---|---|---|---|
+| `1_hebb_letters` | 20 384 | 26 | 0.015 s | 0.893 | 0.992 | 0.792 | 0.826 | 0.713 |
+| `2_delta_letters` | 785 | 1 | 1.17 s | 0.903 | 0.981 | 0.833 | 0.556 | — |
+| `3_backprop_mlp` | 120 346 | 26 | 1.17 s | 0.978 | 1.000 | 0.958 | 0.958 | 0.912 |
+| `4_rbf_letters` | 3 146 | 120 | 2.47 s | 0.957 | 1.000 | 0.917 | 0.917 | 0.824 |
+| `5_som_letters` | 200 704 | 256 | 5.53 s | 0.853 | 0.953 | 0.708 | 0.944 | 0.646 |
+
+The `26-class acc` column is the accuracy over all 26 letters — the delta
+rule gets a dash because a single neuron can only answer the binary
+question, it cannot name all 26.
+
+## How to read it
+
+- **Balanced accuracy is comparable across rows.** Same data, same split,
+  same metric — this table *is* a ranking.
+- **Time is not a fair fight either.** Practice 1 trains in 15 ms because
+  it only averages pictures; practice 3 runs 25 epochs of gradient descent
+  over a 120k-parameter network. The methods are not doing comparable
+  amounts of work.
+- **Parameters are not comparable either.** The SOM's 200 704 numbers are
+  256 neurons × 784 inputs — one prototype per neuron, and the map has to
+  be big enough to cover 26 classes. The delta rule's 785 numbers do the
+  same job with one neuron, because a straight line is enough to separate
+  X from the rest (mostly).
+- **The winner depends on what you optimise for.** By quality:
+  backprop (0.978) > RBF (0.957) > delta (0.903) > Hebb (0.893) > SOM
+  (0.853). By speed: Hebb wins by two orders of magnitude. By size: delta
+  wins by 250× over the MLP.
 
 ## Caveats
 
-- The score column is **not** comparable across practices — each has its own
-  metric. Practice 1 measures bit-level pattern recovery, 2/3/4 measure
-  classification accuracy on different datasets, 5 measures unsupervised
-  quantisation error. The plots therefore normalise so all scores read
-  "higher is better" (quantisation error is inverted), but the absolute
-  values still don't line up.
-- The comparable columns are parameters, neuron count and time.
-- Practice 1's parameter count (614 656) is an artefact of the
-  associative-memory formulation: a dense 784×784 matrix. It stores 40
-  patterns but allocates a full quadratic matrix. That is exactly the
-  point of the practice.
-- Practice 3 runs a deliberately small MLP for only 3 epochs so the
-  benchmark stays fast — its accuracy (≈0.68) is not the model's ceiling.
+- Practice 3's numbers are not its ceiling — it trains for 25 epochs on a
+  2 496-picture dataset to keep the benchmark fast.
+- Practice 5's SOM is trained *without labels*; the map is labelled
+  afterwards, which is the standard way to turn an SOM into a classifier.
+- Test fonts are deliberately unseen families, so every number here
+  measures generalisation to new handwriting styles, not memorisation.
 
 ## Read
 

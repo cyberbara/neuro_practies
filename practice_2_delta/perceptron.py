@@ -5,15 +5,15 @@ For an input x and target t, with output y = σ(W · x + b):
     ΔW     = η · e · σ'(net) · x
     Δb     = η · e · σ'(net)
 
-Implemented with two activation choices:
+Implemented with three activation choices:
   - "step"   : pure perceptron, no gradient (decision is sign(net))
   - "linear" : LMS — closed-form for linear regression
   - "sigmoid": differentiable, classic logistic delta rule
 
-Works on:
-  - AND / OR / NAND toy problems (linearly separable)
-  - XOR (will fail — the headline result of the practice)
-  - Iris (subset, two classes) — shows it can do real classification.
+Two experiments in the demo:
+  1. Toy logic gates (AND / OR / NAND / XOR) — shows where one neuron
+     breaks down (XOR is not linearly separable).
+  2. The real task: **find the letter X** on the letters dataset.
 """
 from __future__ import annotations
 
@@ -68,6 +68,10 @@ class Perceptron:
     def predict_class(self, X):
         raw = self.predict_raw(X)
         return (raw >= 0.5).astype(int)
+
+    def predict_proba(self, X):
+        """P(class 1) — for the sigmoid activation."""
+        return self.predict_raw(X)
 
     # ----------------------------------------------------------- one epoch
     def _step(self, X, y):
