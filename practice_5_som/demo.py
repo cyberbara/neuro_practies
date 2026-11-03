@@ -141,25 +141,32 @@ def main():
     # --- Where does X live on the map? --------------------------------------
     flat = labels.ravel()
     x_neurons = np.where(flat == split.target_index)[0]
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].imshow(labels == split.target_index, cmap="gray_r", vmin=0, vmax=1)
-    axes[0].set_title(f"neurons that ended up on letter {split.target}")
-    axes[0].axis("off")
-    # pictures of the neurons of the X cluster
     n_show = min(6, len(x_neurons))
+    fig = plt.figure(figsize=(12, 5.6))
+    gs = fig.add_gridspec(2, 6, height_ratios=[2.4, 1.0], hspace=0.35,
+                          wspace=0.25)
+
+    # top: the whole map, X neurons outlined in red
+    ax = fig.add_subplot(gs[0, :])
+    ax.imshow(labels, cmap="tab20", vmin=-0.5, vmax=split.n_classes - 0.5)
+    rows, cols = np.divmod(x_neurons, som.cfg.n_cols)
+    for r, c in zip(rows, cols):
+        ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, fill=False,
+                                   edgecolor="red", linewidth=2))
+    ax.set_title(f"16×16 SOM map — {len(x_neurons)} neurons ended up on "
+                 f"letter {split.target} (red outline)", fontsize=12)
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # bottom: what those neurons look like (first 6 of the cluster)
     for k in range(n_show):
-        ax = axes[1]
-        ax.axis("off")
-        break
-    axes[1].axis("off")
-    for k, idx in enumerate(x_neurons[:6]):
-        inset = axes[1].inset_axes([k / 6, 0.05, 0.15, 0.55])
-        inset.imshow(som.W[idx].reshape(28, 28), cmap="gray_r", vmin=0, vmax=1)
-        inset.set_xticks([]); inset.set_yticks([])
-        inset.set_title(split.target, fontsize=8)
-    fig.suptitle(f"Cluster of the letter {split.target} on the SOM", fontsize=13)
-    fig.tight_layout()
-    fig.savefig(OUT / "p5_x_cluster.png", dpi=120)
+        axk = fig.add_subplot(gs[1, k])
+        axk.imshow(som.W[x_neurons[k]].reshape(28, 28), cmap="gray_r",
+                   vmin=0, vmax=1)
+        axk.set_xticks([]); axk.set_yticks([])
+        axk.set_title(f"neuron #{x_neurons[k]}", fontsize=8)
+    fig.suptitle(f"Cluster of the letter {split.target} on the SOM "
+                 f"({n_show} of {len(x_neurons)} neurons shown)", fontsize=13)
+    fig.savefig(OUT / "p5_x_cluster.png", dpi=120, bbox_inches="tight")
     plt.close(fig)
 
     print("figures written to:", OUT)

@@ -34,7 +34,7 @@ which is exactly the question the practice asks.
 
 | practice | params | neurons | train time | balanced acc | AUC | recall(X) | precision(X) | 26-class acc |
 |---|---|---|---|---|---|---|---|---|
-| `1_hebb_letters` | 20 384 | 26 | 0.015 s | 0.893 | 0.992 | 0.792 | 0.826 | 0.713 |
+| `1_hebb_letters` | 20 384 | 26 | 0.015 s | 0.892 | 0.992 | 0.792 | 0.826 | 0.713 |
 | `2_delta_letters` | 785 | 1 | 1.17 s | 0.903 | 0.981 | 0.833 | 0.556 | — |
 | `3_backprop_mlp` | 120 346 | 26 | 1.17 s | 0.978 | 1.000 | 0.958 | 0.958 | 0.912 |
 | `4_rbf_letters` | 3 146 | 120 | 2.47 s | 0.957 | 1.000 | 0.917 | 0.917 | 0.824 |
@@ -58,7 +58,7 @@ question, it cannot name all 26.
   same job with one neuron, because a straight line is enough to separate
   X from the rest (mostly).
 - **The winner depends on what you optimise for.** By quality:
-  backprop (0.978) > RBF (0.957) > delta (0.903) > Hebb (0.893) > SOM
+  backprop (0.978) > RBF (0.957) > delta (0.903) > Hebb (0.892) > SOM
   (0.853). By speed: Hebb wins by two orders of magnitude. By size: delta
   wins by 250× over the MLP.
 
